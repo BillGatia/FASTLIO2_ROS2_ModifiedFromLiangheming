@@ -115,6 +115,60 @@ public:
         m_builder_config.t_il << t_il_vec[0], t_il_vec[1], t_il_vec[2];
         m_builder_config.r_il << r_il_vec[0], r_il_vec[1], r_il_vec[2], r_il_vec[3], r_il_vec[4], r_il_vec[5], r_il_vec[6], r_il_vec[7], r_il_vec[8];
         m_builder_config.lidar_cov_inv = config["lidar_cov_inv"].as<double>();
+
+        m_builder_config.scan_matching.point_to_plane.neighbor_count = m_builder_config.near_search_num;
+        if (const YAML::Node scan_matching = config["scan_matching"])
+        {
+            if (scan_matching["method"])
+                m_builder_config.scan_matching.method = scan_matching["method"].as<std::string>();
+            if (scan_matching["min_effective_points"])
+                m_builder_config.scan_matching.min_effective_points = scan_matching["min_effective_points"].as<int>();
+
+            if (const YAML::Node cfg = scan_matching["point_to_plane"])
+            {
+                if (cfg["neighbor_count"])
+                    m_builder_config.scan_matching.point_to_plane.neighbor_count = cfg["neighbor_count"].as<int>();
+                if (cfg["max_neighbor_squared_distance"])
+                    m_builder_config.scan_matching.point_to_plane.max_neighbor_squared_distance = cfg["max_neighbor_squared_distance"].as<double>();
+                if (cfg["plane_fit_threshold"])
+                    m_builder_config.scan_matching.point_to_plane.plane_fit_threshold = cfg["plane_fit_threshold"].as<double>();
+                if (cfg["score_threshold"])
+                    m_builder_config.scan_matching.point_to_plane.score_threshold = cfg["score_threshold"].as<double>();
+            }
+            if (const YAML::Node cfg = scan_matching["point_to_point"])
+            {
+                if (cfg["max_correspondence_distance"])
+                    m_builder_config.scan_matching.point_to_point.max_correspondence_distance = cfg["max_correspondence_distance"].as<double>();
+                if (cfg["min_effective_points"])
+                    m_builder_config.scan_matching.point_to_point.min_effective_points = cfg["min_effective_points"].as<int>();
+            }
+            if (const YAML::Node cfg = scan_matching["ndt"])
+            {
+                if (cfg["resolution"])
+                    m_builder_config.scan_matching.ndt.resolution = cfg["resolution"].as<double>();
+                if (cfg["min_points_per_voxel"])
+                    m_builder_config.scan_matching.ndt.min_points_per_voxel = cfg["min_points_per_voxel"].as<int>();
+                if (cfg["covariance_regularization"])
+                    m_builder_config.scan_matching.ndt.covariance_regularization = cfg["covariance_regularization"].as<double>();
+                if (cfg["max_mahalanobis_distance"])
+                    m_builder_config.scan_matching.ndt.max_mahalanobis_distance = cfg["max_mahalanobis_distance"].as<double>();
+                if (cfg["min_effective_points"])
+                    m_builder_config.scan_matching.ndt.min_effective_points = cfg["min_effective_points"].as<int>();
+            }
+            if (const YAML::Node cfg = scan_matching["loam"])
+            {
+                if (cfg["neighbor_count"])
+                    m_builder_config.scan_matching.loam.neighbor_count = cfg["neighbor_count"].as<int>();
+                if (cfg["max_neighbor_squared_distance"])
+                    m_builder_config.scan_matching.loam.max_neighbor_squared_distance = cfg["max_neighbor_squared_distance"].as<double>();
+                if (cfg["line_eigenvalue_ratio"])
+                    m_builder_config.scan_matching.loam.line_eigenvalue_ratio = cfg["line_eigenvalue_ratio"].as<double>();
+                if (cfg["plane_eigenvalue_ratio"])
+                    m_builder_config.scan_matching.loam.plane_eigenvalue_ratio = cfg["plane_eigenvalue_ratio"].as<double>();
+                if (cfg["min_effective_points"])
+                    m_builder_config.scan_matching.loam.min_effective_points = cfg["min_effective_points"].as<int>();
+            }
+        }
     }
 
     void imuCB(const sensor_msgs::msg::Imu::SharedPtr msg)

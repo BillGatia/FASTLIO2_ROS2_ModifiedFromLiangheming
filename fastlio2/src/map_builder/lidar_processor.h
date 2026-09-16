@@ -2,6 +2,7 @@
 #include "commons.h"
 #include "ieskf.h"
 #include "ikd_Tree.h"
+#include "scan_matcher.h"
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/common/transforms.h>
 
@@ -36,13 +37,12 @@ private:
     LocalMap m_local_map;
     std::shared_ptr<IESKF> m_kf;
     std::shared_ptr<KD_TREE<PointType>> m_ikdtree;
+    std::shared_ptr<ScanMatcher> m_scan_matcher;
     CloudType::Ptr m_cloud_lidar;
     CloudType::Ptr m_cloud_down_lidar;
     CloudType::Ptr m_cloud_down_world;
     std::vector<bool> m_point_selected_flag;
-    CloudType::Ptr m_norm_vec;
-    CloudType::Ptr m_effect_cloud_lidar;
-    CloudType::Ptr m_effect_norm_vec;
     std::vector<PointVec> m_nearest_points;
+    std::vector<std::vector<float>> m_nearest_squared_distances;
     pcl::VoxelGrid<PointType> m_scan_filter;
 };

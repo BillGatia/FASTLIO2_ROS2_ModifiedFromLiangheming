@@ -40,7 +40,8 @@ include_directories(
 )
 
 set(SRC_LIST src/pgos/commons.cpp
-             src/pgos/simple_pgo.cpp)
+             src/pgos/simple_pgo.cpp
+             src/pgos/loop_closure.cpp)
 
 add_executable(pgo_node src/pgo_node.cpp ${SRC_LIST})
 ament_target_dependencies(pgo_node rclcpp std_msgs sensor_msgs nav_msgs message_filters pcl_conversions tf2_ros geometry_msgs visualization_msgs interface GTSAM)

@@ -3,13 +3,13 @@ lidar_topic: /livox/lidar
 body_frame: body
 world_frame: lidar
 print_time_cost: false
-print_pose: true
+print_pose: false
 
-lidar_filter_num: 6
-lidar_min_range: 0.5
+lidar_filter_num: 4
+lidar_min_range: 1.5
 lidar_max_range: 30.0
-scan_resolution: 0.15
-map_resolution: 0.3
+scan_resolution: 0.05
+map_resolution: 0.1
 
 cube_len: 300
 det_range: 60
@@ -31,3 +31,33 @@ r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 t_il: [-0.011, -0.02329, 0.04412]
 
 lidar_cov_inv: 1000.0
+
+# point_to_plane (default), point_to_point, ndt, or loam
+scan_matching:
+  method: loam
+  min_effective_points: 1
+
+  point_to_plane:
+    neighbor_count: 10
+    max_neighbor_squared_distance: 5.0
+    plane_fit_threshold: 0.1
+    score_threshold: 0.9
+
+  point_to_point:
+    max_correspondence_distance: 2.236
+    min_effective_points: 20
+
+  ndt:
+    resolution: 1.0
+    min_points_per_voxel: 6
+    covariance_regularization: 0.01
+    max_mahalanobis_distance: 9.0
+    min_effective_points: 20
+
+  # LOAM-style local line/plane residuals for non-repetitive Livox scans.
+  loam:
+    neighbor_count: 10
+    max_neighbor_squared_distance: 5.0
+    line_eigenvalue_ratio: 3.0
+    plane_eigenvalue_ratio: 0.1
+    min_effective_points: 20

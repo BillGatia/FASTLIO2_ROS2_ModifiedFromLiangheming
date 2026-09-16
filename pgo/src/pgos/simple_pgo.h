@@ -11,6 +11,8 @@
 #include <gtsam/slam/PriorFactor.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
+#include <limits>
+#include <string>
 
 struct KeyPoseWithCloud
 {
@@ -40,7 +42,65 @@ struct Config
     int loop_submap_half_range = 5;
     double submap_resolution = 0.1;
     double min_loop_detect_duration = 10.0;
+    std::string loop_detector = "proximity";
+    std::string loop_registration = "icp";
+
+    struct ScanContextConfig
+    {
+        int rings = 20;
+        int sectors = 60;
+        double max_radius = 80.0;
+        int candidate_count = 10;
+        double distance_threshold = 0.15;
+        int exclude_recent_keyframes = 30;
+    } scan_context;
+
+    struct RegistrationConfig
+    {
+        int max_iterations = 50;
+        double max_correspondence_distance = 10.0;
+        double transformation_epsilon = 1e-6;
+        double euclidean_fitness_epsilon = 1e-6;
+        double fitness_score_threshold = 0.15;
+        double ndt_resolution = 1.0;
+        double ndt_step_size = 0.1;
+    } registration;
 };
+
+struct LoopCandidate
+{
+    int target_id = -1;
+    M4F initial_guess = M4F::Identity();
+    double descriptor_distance = 0.0;
+};
+
+struct RegistrationResult
+{
+    bool converged = false;
+    M4F transformation = M4F::Identity();
+    double score = std::numeric_limits<double>::infinity();
+};
+
+class LoopCandidateDetector
+{
+public:
+    virtual ~LoopCandidateDetector() = default;
+    virtual bool detect(const std::vector<KeyPoseWithCloud> &key_poses,
+                        const Config &config,
+                        LoopCandidate &candidate) const = 0;
+};
+
+class LoopRegistration
+{
+public:
+    virtual ~LoopRegistration() = default;
+    virtual RegistrationResult align(const CloudType::Ptr &source,
+                                     const CloudType::Ptr &target,
+                                     const M4F &initial_guess) = 0;
+};
+
+std::shared_ptr<LoopCandidateDetector> createLoopCandidateDetector(const Config &config);
+std::shared_ptr<LoopRegistration> createLoopRegistration(const Config &config);
 
 class SimplePGO
 {
@@ -74,5 +134,6 @@ private:
     std::shared_ptr<gtsam::ISAM2> m_isam2;
     gtsam::Values m_initial_values;
     gtsam::NonlinearFactorGraph m_graph;
-    pcl::IterativeClosestPoint<PointType, PointType> m_icp;
+    std::shared_ptr<LoopCandidateDetector> m_candidate_detector;
+    std::shared_ptr<LoopRegistration> m_registration;
 };

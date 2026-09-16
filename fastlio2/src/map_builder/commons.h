@@ -2,6 +2,7 @@
 #include <Eigen/Eigen>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
+#include <string>
 
 using PointType = pcl::PointXYZINormal;
 using CloudType = pcl::PointCloud<PointType>;
@@ -26,6 +27,48 @@ using Vec = std::vector<T>;
 bool esti_plane(PointVec &points, const double &thresh, V4D &out);
 
 float sq_dist(const PointType &p1, const PointType &p2);
+
+struct PointToPlaneConfig
+{
+    int neighbor_count = 5;
+    double max_neighbor_squared_distance = 5.0;
+    double plane_fit_threshold = 0.1;
+    double score_threshold = 0.9;
+};
+
+struct PointToPointConfig
+{
+    double max_correspondence_distance = 2.236;
+    int min_effective_points = 20;
+};
+
+struct NDTMatcherConfig
+{
+    double resolution = 1.0;
+    int min_points_per_voxel = 6;
+    double covariance_regularization = 0.01;
+    double max_mahalanobis_distance = 9.0;
+    int min_effective_points = 20;
+};
+
+struct LOAMMatcherConfig
+{
+    int neighbor_count = 5;
+    double max_neighbor_squared_distance = 5.0;
+    double line_eigenvalue_ratio = 3.0;
+    double plane_eigenvalue_ratio = 0.1;
+    int min_effective_points = 20;
+};
+
+struct ScanMatcherConfig
+{
+    std::string method = "point_to_plane";
+    int min_effective_points = 1;
+    PointToPlaneConfig point_to_plane;
+    PointToPointConfig point_to_point;
+    NDTMatcherConfig ndt;
+    LOAMMatcherConfig loam;
+};
 
 struct Config
 {
@@ -52,6 +95,7 @@ struct Config
     V3D t_il = V3D::Zero();
 
     double lidar_cov_inv = 1000.0;
+    ScanMatcherConfig scan_matching;
 };
 
 struct IMUData

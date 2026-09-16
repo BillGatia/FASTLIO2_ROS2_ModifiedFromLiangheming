@@ -3,14 +3,12 @@
 LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config(config), m_kf(kf)
 {
     m_ikdtree = std::make_shared<KD_TREE<PointType>>();
+    m_scan_matcher = createScanMatcher(m_config);
     m_ikdtree->set_downsample_param(m_config.map_resolution);
     m_cloud_down_lidar.reset(new CloudType);
     m_cloud_down_world.reset(new CloudType(10000, 1));
-    m_norm_vec.reset(new CloudType(10000, 1));
-    m_effect_cloud_lidar.reset(new CloudType(10000, 1));
-    m_effect_norm_vec.reset(new CloudType(10000, 1));
     m_nearest_points.resize(10000);
-    m_point_selected_flag.resize(10000, false);
+    m_nearest_squared_distances.resize(10000);
 
     if (m_config.scan_resolution > 0.0)
     {
@@ -23,6 +21,8 @@ LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_co
                           { V3D rot_delta = delta.block<3, 1>(0, 0);
                             V3D t_delta = delta.block<3, 1>(3, 0);
                             return (rot_delta.norm() * 57.3 < 0.01) && (t_delta.norm() * 100 < 0.015); });
+
+    std::cout << "FAST-LIO2 scan matcher: " << m_config.scan_matching.method << std::endl;
 }
 
 void LidarProcessor::trimCloudMap()
@@ -152,12 +152,6 @@ void LidarProcessor::initCloudMap(PointVec &point_vec)
 
 void LidarProcessor::process(SyncPackage &package)
 {
-    // m_kf->setLossFunction([&](State &s, SharedState &d)
-    //                       { updateLossFunc(s, d); });
-    // m_kf->setStopFunction([&](const V21D &delta) -> bool
-    //                       { V3D rot_delta = delta.block<3, 1>(0, 0);
-    //                         V3D t_delta = delta.block<3, 1>(3, 0);
-    //                         return (rot_delta.norm() * 57.3 < 0.01) && (t_delta.norm() * 100 < 0.015); });
     if (m_config.scan_resolution > 0.0)
     {
         m_scan_filter.setInputCloud(package.cloud);
@@ -168,13 +162,30 @@ void LidarProcessor::process(SyncPackage &package)
         pcl::copyPointCloud(*package.cloud, *m_cloud_down_lidar);
     }
     trimCloudMap();
-    m_kf->update();
-    incrCloudMap();
+    if (m_scan_matcher->requiresMapPoints())
+    {
+        PointVec map_points;
+        m_ikdtree->Box_Search(m_local_map.local_map_corner, map_points);
+        m_scan_matcher->prepare(map_points);
+    }
+    if (m_kf->update())
+        incrCloudMap();
 }
 
 void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
 {
     int size = m_cloud_down_lidar->size();
+    if (m_cloud_down_world->size() < static_cast<size_t>(size))
+        m_cloud_down_world->resize(size);
+    if (m_nearest_points.size() < static_cast<size_t>(size))
+    {
+        m_nearest_points.resize(size);
+        m_nearest_squared_distances.resize(size);
+    }
+
+    std::vector<LinearizedResidual, Eigen::aligned_allocator<LinearizedResidual>> residuals(size);
+    std::vector<bool> selected(size, false);
+    const int search_count = std::max(m_config.near_search_num, m_scan_matcher->neighborCount());
 #ifdef MP_EN
     omp_set_num_threads(MP_PROC_NUM);
 #pragma omp parallel for
@@ -189,71 +200,41 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
         point_world.y = point_world_vec(1);
         point_world.z = point_world_vec(2);
         point_world.intensity = point_body.intensity;
-        std::vector<float> point_sq_dist(m_config.near_search_num);
         auto &points_near = m_nearest_points[i];
-        m_ikdtree->Nearest_Search(point_world, m_config.near_search_num, points_near, point_sq_dist);
-        if (points_near.size() >= static_cast<size_t>(m_config.near_search_num) && point_sq_dist[m_config.near_search_num - 1] <= 5)
-            m_point_selected_flag[i] = true;
+        auto &point_sq_dist = m_nearest_squared_distances[i];
+        if (search_count > 0)
+            m_ikdtree->Nearest_Search(point_world, search_count, points_near, point_sq_dist);
         else
-            m_point_selected_flag[i] = false;
-        if (!m_point_selected_flag[i])
-            continue;
-
-        Eigen::Vector4d pabcd;
-        m_point_selected_flag[i] = false;
-        if (esti_plane(points_near, 0.1, pabcd))
         {
-            double pd2 = pabcd(0) * point_world_vec(0) + pabcd(1) * point_world_vec(1) + pabcd(2) * point_world_vec(2) + pabcd(3);
-            double s = 1 - 0.9 * std::fabs(pd2) / std::sqrt(point_body_vec.norm());
-            if (s > 0.9)
-            {
-                m_point_selected_flag[i] = true;
-                m_norm_vec->points[i].x = pabcd(0);
-                m_norm_vec->points[i].y = pabcd(1);
-                m_norm_vec->points[i].z = pabcd(2);
-                m_norm_vec->points[i].intensity = pd2;
-            }
+            points_near.clear();
+            point_sq_dist.clear();
         }
+        selected[i] = m_scan_matcher->linearize(point_body, point_world_vec, points_near,
+                                                point_sq_dist, state, residuals[i]);
     }
 
     int effect_feat_num = 0;
-    for (int i = 0; i < size; i++)
-    {
-        if (!m_point_selected_flag[i])
-            continue;
-        m_effect_cloud_lidar->points[effect_feat_num] = m_cloud_down_lidar->points[i];
-        m_effect_norm_vec->points[effect_feat_num] = m_norm_vec->points[i];
-        effect_feat_num++;
-    }
-    if (effect_feat_num < 1)
+    for (bool valid : selected)
+        effect_feat_num += valid ? 1 : 0;
+    if (effect_feat_num < m_scan_matcher->minEffectivePoints())
     {
         share_data.valid = false;
-        std::cerr << "NO Effective Points!" << std::endl;
         return;
     }
     share_data.valid = true;
     share_data.H.setZero();
     share_data.b.setZero();
-    Eigen::Matrix<double, 1, 12> J;
-    for (int i = 0; i < effect_feat_num; i++)
+    for (int i = 0; i < size; i++)
     {
-        J.setZero();
-        const PointType &laser_p = m_effect_cloud_lidar->points[i];
-        const PointType &norm_p = m_effect_norm_vec->points[i];
-        Eigen::Vector3d laser_p_vec(laser_p.x, laser_p.y, laser_p.z);
-        Eigen::Vector3d norm_vec(norm_p.x, norm_p.y, norm_p.z);
-        Eigen::Matrix<double, 1, 3> B = -norm_vec.transpose() * state.r_wi * Sophus::SO3d::hat(state.r_il * laser_p_vec + state.t_il);
-        J.block<1, 3>(0, 0) = B;
-        J.block<1, 3>(0, 3) = norm_vec.transpose();
-        if (m_config.esti_il)
-        {
-            Eigen::Matrix<double, 1, 3> C = -norm_vec.transpose() * state.r_wi * state.r_il * Sophus::SO3d::hat(laser_p_vec);
-            Eigen::Matrix<double, 1, 3> D = norm_vec.transpose() * state.r_wi;
-            J.block<1, 3>(0, 6) = C;
-            J.block<1, 3>(0, 9) = D;
-        }
-        share_data.H += J.transpose() * m_config.lidar_cov_inv * J;
-        share_data.b += J.transpose() * m_config.lidar_cov_inv * norm_p.intensity;
+        if (!selected[i])
+            continue;
+        const LinearizedResidual &residual = residuals[i];
+        const int dim = residual.dimension;
+        const auto J = residual.jacobian.topRows(dim);
+        const auto information = residual.information.topLeftCorner(dim, dim);
+        const auto value = residual.residual.head(dim);
+        share_data.H += J.transpose() * information * J;
+        share_data.b += J.transpose() * information * value;
     }
 }
 

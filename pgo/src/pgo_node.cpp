@@ -85,6 +85,45 @@ public:
         m_pgo_config.loop_submap_half_range = config["loop_submap_half_range"].as<int>();
         m_pgo_config.submap_resolution = config["submap_resolution"].as<double>();
         m_pgo_config.min_loop_detect_duration = config["min_loop_detect_duration"].as<double>();
+
+        if (config["loop_detector"])
+            m_pgo_config.loop_detector = config["loop_detector"].as<std::string>();
+        if (config["loop_registration"])
+            m_pgo_config.loop_registration = config["loop_registration"].as<std::string>();
+        m_pgo_config.registration.fitness_score_threshold = m_pgo_config.loop_score_tresh;
+
+        if (const YAML::Node cfg = config["scan_context"])
+        {
+            if (cfg["rings"])
+                m_pgo_config.scan_context.rings = cfg["rings"].as<int>();
+            if (cfg["sectors"])
+                m_pgo_config.scan_context.sectors = cfg["sectors"].as<int>();
+            if (cfg["max_radius"])
+                m_pgo_config.scan_context.max_radius = cfg["max_radius"].as<double>();
+            if (cfg["candidate_count"])
+                m_pgo_config.scan_context.candidate_count = cfg["candidate_count"].as<int>();
+            if (cfg["distance_threshold"])
+                m_pgo_config.scan_context.distance_threshold = cfg["distance_threshold"].as<double>();
+            if (cfg["exclude_recent_keyframes"])
+                m_pgo_config.scan_context.exclude_recent_keyframes = cfg["exclude_recent_keyframes"].as<int>();
+        }
+        if (const YAML::Node cfg = config["registration"])
+        {
+            if (cfg["max_iterations"])
+                m_pgo_config.registration.max_iterations = cfg["max_iterations"].as<int>();
+            if (cfg["max_correspondence_distance"])
+                m_pgo_config.registration.max_correspondence_distance = cfg["max_correspondence_distance"].as<double>();
+            if (cfg["transformation_epsilon"])
+                m_pgo_config.registration.transformation_epsilon = cfg["transformation_epsilon"].as<double>();
+            if (cfg["euclidean_fitness_epsilon"])
+                m_pgo_config.registration.euclidean_fitness_epsilon = cfg["euclidean_fitness_epsilon"].as<double>();
+            if (cfg["fitness_score_threshold"])
+                m_pgo_config.registration.fitness_score_threshold = cfg["fitness_score_threshold"].as<double>();
+            if (cfg["ndt_resolution"])
+                m_pgo_config.registration.ndt_resolution = cfg["ndt_resolution"].as<double>();
+            if (cfg["ndt_step_size"])
+                m_pgo_config.registration.ndt_step_size = cfg["ndt_step_size"].as<double>();
+        }
     }
     void syncCB(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &cloud_msg, const nav_msgs::msg::Odometry::ConstSharedPtr &odom_msg)
     {

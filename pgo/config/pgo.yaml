@@ -12,3 +12,25 @@ loop_score_tresh: 0.20
 loop_submap_half_range: 8
 submap_resolution: 0.1
 min_loop_detect_duration: 5.0
+
+# Candidate detector: proximity (default) or scan_context.
+loop_detector: proximity
+# Geometric verification: icp (default), gicp, or ndt.
+loop_registration: gicp
+
+scan_context:
+  rings: 20
+  sectors: 60
+  max_radius: 80.0
+  candidate_count: 10
+  distance_threshold: 0.15
+  exclude_recent_keyframes: 30
+
+registration:
+  max_iterations: 50
+  max_correspondence_distance: 10.0
+  transformation_epsilon: 1.0e-6
+  euclidean_fitness_epsilon: 1.0e-6
+  fitness_score_threshold: 0.20
+  ndt_resolution: 1.0
+  ndt_step_size: 0.1

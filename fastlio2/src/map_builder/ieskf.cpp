@@ -75,46 +75,78 @@ void IESKF::predict(const Input &inp, double dt, const M12D &Q)
     m_P = m_F * m_P * m_F.transpose() + m_G * Q * m_G.transpose();
 }
 
-void IESKF::update()
+bool IESKF::update()
 {
-    State predict_x = m_x;
+    const State predict_x = m_x;
+    const M21D predict_p = m_P;
+    State candidate_x = predict_x;
     SharedState shared_data;
     shared_data.iter_num = 0;
     shared_data.res = 1e10;
     V21D delta = V21D::Zero();
-    M21D H = M21D::Identity();
+    M21D H = M21D::Zero();
+    M21D last_valid_h = M21D::Zero();
     V21D b;
+    V21D last_delta = V21D::Zero();
+    bool has_valid_update = false;
+
+    Eigen::LDLT<M21D> covariance_solver(predict_p);
+    if (covariance_solver.info() != Eigen::Success)
+        return false;
+    const M21D p_inverse = covariance_solver.solve(M21D::Identity());
+    if (!p_inverse.allFinite())
+        return false;
 
     for (size_t i = 0; i < m_max_iter; i++)
     {
-        m_loss_func(m_x, shared_data);
+        shared_data.valid = false;
+        shared_data.H.setZero();
+        shared_data.b.setZero();
+        m_loss_func(candidate_x, shared_data);
         if (!shared_data.valid)
             break;
         H.setZero();
         b.setZero();
-        delta = m_x - predict_x;
+        delta = candidate_x - predict_x;
         M21D J = M21D::Identity();
         J.block<3, 3>(0, 0) = JrInv(delta.segment<3>(0));
         J.block<3, 3>(6, 6) = JrInv(delta.segment<3>(6));
-        H += J.transpose() * m_P.inverse() * J;
-        b += J.transpose() * m_P.inverse() * delta;
+        H += J.transpose() * p_inverse * J;
+        b += J.transpose() * p_inverse * delta;
 
         H.block<12, 12>(0, 0) += shared_data.H;
         b.block<12, 1>(0, 0) += shared_data.b;
 
-        delta = -H.inverse() * b;
+        Eigen::LDLT<M21D> solver(H);
+        if (solver.info() != Eigen::Success)
+            break;
+        delta = solver.solve(-b);
+        if (!delta.allFinite())
+            break;
 
-        m_x += delta;
+        candidate_x += delta;
+        has_valid_update = true;
+        last_valid_h = H;
+        last_delta = delta;
         shared_data.iter_num += 1;
 
         if (m_stop_func(delta))
             break;
     }
 
+    if (!has_valid_update)
+        return false;
+
     M21D L = M21D::Identity();
-    // L.block<3, 3>(0, 0) = JrInv(delta.segment<3>(0));
-    // L.block<3, 3>(6, 6) = JrInv(delta.segment<3>(6));
-    L.block<3, 3>(0, 0) = Jr(delta.segment<3>(0));
-    L.block<3, 3>(6, 6) = Jr(delta.segment<3>(6));
-    m_P = L * H.inverse() * L.transpose();
+    L.block<3, 3>(0, 0) = Jr(last_delta.segment<3>(0));
+    L.block<3, 3>(6, 6) = Jr(last_delta.segment<3>(6));
+    Eigen::LDLT<M21D> final_solver(last_valid_h);
+    if (final_solver.info() != Eigen::Success)
+        return false;
+    M21D posterior = L * final_solver.solve(M21D::Identity()) * L.transpose();
+    if (!posterior.allFinite())
+        return false;
+    m_x = candidate_x;
+    m_P = 0.5 * (posterior + posterior.transpose());
+    return true;
 }

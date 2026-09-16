@@ -10,12 +10,10 @@ SimplePGO::SimplePGO(const Config &config) : m_config(config)
     m_graph.resize(0);
     m_r_offset.setIdentity();
     m_t_offset.setZero();
-
-    m_icp.setMaximumIterations(50);
-    m_icp.setMaxCorrespondenceDistance(10);
-    m_icp.setTransformationEpsilon(1e-6);
-    m_icp.setEuclideanFitnessEpsilon(1e-6);
-    m_icp.setRANSACIterations(0);
+    m_candidate_detector = createLoopCandidateDetector(m_config);
+    m_registration = createLoopRegistration(m_config);
+    std::cout << "PGO loop detector: " << m_config.loop_detector
+              << ", registration: " << m_config.loop_registration << std::endl;
 }
 
 bool SimplePGO::isKeyPose(const PoseWithTime &pose)
@@ -105,61 +103,24 @@ void SimplePGO::searchForLoopPairs()
         }
     }
 
-    size_t cur_idx = m_key_poses.size() - 1;
-    const KeyPoseWithCloud &last_item = m_key_poses.back();
-    pcl::PointXYZ last_pose_pt;
-    last_pose_pt.x = last_item.t_global(0);
-    last_pose_pt.y = last_item.t_global(1);
-    last_pose_pt.z = last_item.t_global(2);
-
-    pcl::PointCloud<pcl::PointXYZ>::Ptr key_poses_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-    for (size_t i = 0; i < m_key_poses.size() - 1; i++)
-    {
-        pcl::PointXYZ pt;
-        pt.x = m_key_poses[i].t_global(0);
-        pt.y = m_key_poses[i].t_global(1);
-        pt.z = m_key_poses[i].t_global(2);
-        key_poses_cloud->push_back(pt);
-    }
-    pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
-    kdtree.setInputCloud(key_poses_cloud);
-    std::vector<int> ids;
-    std::vector<float> sqdists;
-    int neighbors = kdtree.radiusSearch(last_pose_pt, m_config.loop_search_radius, ids, sqdists);
-    if (neighbors == 0)
+    const size_t cur_idx = m_key_poses.size() - 1;
+    LoopCandidate candidate;
+    if (!m_candidate_detector->detect(m_key_poses, m_config, candidate))
         return;
 
-    int loop_idx = -1;
-    for (size_t i = 0; i < ids.size(); i++)
-    {
-        int idx = ids[i];
-        if (std::abs(last_item.time - m_key_poses[idx].time) > m_config.loop_time_tresh)
-        {
-            loop_idx = idx;
-            break;
-        }
-    }
-
-    if (loop_idx == -1)
-        return;
-
+    const int loop_idx = candidate.target_id;
     CloudType::Ptr target_cloud = getSubMap(loop_idx, m_config.loop_submap_half_range, m_config.submap_resolution);
     CloudType::Ptr source_cloud = getSubMap(m_key_poses.size() - 1, 0, m_config.submap_resolution);
-    CloudType::Ptr align_cloud(new CloudType);
-
-    m_icp.setInputSource(source_cloud);
-    m_icp.setInputTarget(target_cloud);
-    m_icp.align(*align_cloud);
-
-    if (!m_icp.hasConverged() || m_icp.getFitnessScore() > m_config.loop_score_tresh)
+    const RegistrationResult registration = m_registration->align(source_cloud, target_cloud, candidate.initial_guess);
+    if (!registration.converged)
         return;
 
-    M4F loop_transform = m_icp.getFinalTransformation();
+    const M4F loop_transform = registration.transformation;
 
     LoopPair one_pair;
     one_pair.source_id = cur_idx;
     one_pair.target_id = loop_idx;
-    one_pair.score = m_icp.getFitnessScore();
+    one_pair.score = std::max(registration.score, 1e-12);
     M3D r_refined = loop_transform.block<3, 3>(0, 0).cast<double>() * m_key_poses[cur_idx].r_global;
     V3D t_refined = loop_transform.block<3, 3>(0, 0).cast<double>() * m_key_poses[cur_idx].t_global + loop_transform.block<3, 1>(0, 3).cast<double>();
     one_pair.r_offset = m_key_poses[loop_idx].r_global.transpose() * r_refined;
