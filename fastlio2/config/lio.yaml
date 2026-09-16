@@ -3,6 +3,7 @@ lidar_topic: /livox/lidar
 body_frame: body
 world_frame: lidar
 print_time_cost: false
+print_pose: true
 
 lidar_filter_num: 6
 lidar_min_range: 0.5
@@ -21,7 +22,7 @@ nbg: 0.0001
 
 imu_init_num: 20
 near_search_num: 5
-ieskf_max_iter: 5
+ieskf_max_iter: 10
 
 gravity_align: true
 esti_il: false

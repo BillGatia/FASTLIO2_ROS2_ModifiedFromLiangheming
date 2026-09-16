@@ -17,6 +17,7 @@
 #include "interface/srv/relocalize.hpp"
 #include "interface/srv/is_valid.hpp"
 #include <yaml-cpp/yaml.h>
+#include <cmath>
 
 using namespace std::chrono_literals;
 
@@ -27,6 +28,7 @@ struct NodeConfig
     std::string map_frame = "map";
     std::string local_frame = "lidar";
     double update_hz = 1.0;
+    bool print_pose = false;
 };
 
 struct NodeState
@@ -92,6 +94,8 @@ public:
         m_config.map_frame = config["map_frame"].as<std::string>();
         m_config.local_frame = config["local_frame"].as<std::string>();
         m_config.update_hz = config["update_hz"].as<double>();
+        if (config["print_pose"])
+            m_config.print_pose = config["print_pose"].as<bool>();
 
         m_localizer_config.rough_scan_resolution = config["rough_scan_resolution"].as<double>();
         m_localizer_config.rough_map_resolution = config["rough_map_resolution"].as<double>();
@@ -201,6 +205,14 @@ public:
         transformStamped.transform.rotation.z = q.z();
         transformStamped.transform.rotation.w = q.w();
         m_tf_broadcaster->sendTransform(transformStamped);
+        if (m_config.print_pose)
+        {
+            const double yaw = std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
+                                          1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                 "Pose %s->%s: x=%.3f m, y=%.3f m, yaw=%.3f rad",
+                                 m_config.map_frame.c_str(), m_config.local_frame.c_str(), t.x(), t.y(), yaw);
+        }
     }
 
     void relocCB(const std::shared_ptr<interface::srv::Relocalize::Request> request, std::shared_ptr<interface::srv::Relocalize::Response> response)

@@ -20,6 +20,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <yaml-cpp/yaml.h>
+#include <cmath>
 
 using namespace std::chrono_literals;
 struct NodeConfig
@@ -29,6 +30,7 @@ struct NodeConfig
     std::string body_frame = "body";
     std::string world_frame = "lidar";
     bool print_time_cost = false;
+    bool print_pose = false;
 };
 struct StateData
 {
@@ -87,6 +89,8 @@ public:
         m_node_config.body_frame = config["body_frame"].as<std::string>();
         m_node_config.world_frame = config["world_frame"].as<std::string>();
         m_node_config.print_time_cost = config["print_time_cost"].as<bool>();
+        if (config["print_pose"])
+            m_node_config.print_pose = config["print_pose"].as<bool>();
 
         m_builder_config.lidar_filter_num = config["lidar_filter_num"].as<int>();
         m_builder_config.lidar_min_range = config["lidar_min_range"].as<double>();
@@ -238,6 +242,14 @@ public:
         transformStamped.transform.rotation.z = q.z();
         transformStamped.transform.rotation.w = q.w();
         broad_caster->sendTransform(transformStamped);
+        if (m_node_config.print_pose)
+        {
+            const double yaw = std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
+                                          1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                 "Pose %s->%s: x=%.3f m, y=%.3f m, yaw=%.3f rad",
+                                 frame_id.c_str(), child_frame.c_str(), t.x(), t.y(), yaw);
+        }
     }
 
     void timerCB()

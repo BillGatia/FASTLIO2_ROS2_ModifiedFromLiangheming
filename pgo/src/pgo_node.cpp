@@ -18,6 +18,7 @@
 #include <pcl/io/io.h>
 #include <fstream>
 #include <yaml-cpp/yaml.h>
+#include <cmath>
 
 using namespace std::chrono_literals;
 
@@ -27,6 +28,7 @@ struct NodeConfig
     std::string odom_topic = "/lio/odom";
     std::string map_frame = "map";
     std::string local_frame = "lidar";
+    bool print_pose = false;
 };
 
 struct NodeState
@@ -72,6 +74,8 @@ public:
         m_node_config.odom_topic = config["odom_topic"].as<std::string>();
         m_node_config.map_frame = config["map_frame"].as<std::string>();
         m_node_config.local_frame = config["local_frame"].as<std::string>();
+        if (config["print_pose"])
+            m_node_config.print_pose = config["print_pose"].as<bool>();
 
         m_pgo_config.key_pose_delta_deg = config["key_pose_delta_deg"].as<double>();
         m_pgo_config.key_pose_delta_trans = config["key_pose_delta_trans"].as<double>();
@@ -122,6 +126,14 @@ public:
         transformStamped.transform.rotation.z = q.z();
         transformStamped.transform.rotation.w = q.w();
         m_tf_broadcaster->sendTransform(transformStamped);
+        if (m_node_config.print_pose)
+        {
+            const double yaw = std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
+                                          1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                 "Pose %s->%s: x=%.3f m, y=%.3f m, yaw=%.3f rad",
+                                 m_node_config.map_frame.c_str(), m_node_config.local_frame.c_str(), t.x(), t.y(), yaw);
+        }
     }
 
     void publishLoopMarkers(builtin_interfaces::msg::Time &time)
