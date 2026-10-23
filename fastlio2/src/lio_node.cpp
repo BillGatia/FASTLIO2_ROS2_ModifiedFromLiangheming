@@ -19,6 +19,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include "interface/srv/set_lio_pose.hpp"
 #include <yaml-cpp/yaml.h>
 #include <cmath>
 
@@ -43,6 +44,11 @@ struct StateData
     std::deque<std::pair<double, pcl::PointCloud<pcl::PointXYZINormal>::Ptr>> lidar_buffer;
     nav_msgs::msg::Path path;
 };
+struct OutputPose
+{
+    V3D position;
+    Eigen::Quaterniond orientation;
+};
 
 class LIONode : public rclcpp::Node
 {
@@ -66,6 +72,9 @@ public:
 
         m_kf = std::make_shared<IESKF>();
         m_builder = std::make_shared<MapBuilder>(m_builder_config, m_kf);
+        m_set_pose_srv = this->create_service<interface::srv::SetLioPose>(
+            "set_pose", std::bind(&LIONode::setPoseCB, this,
+                                  std::placeholders::_1, std::placeholders::_2));
         m_timer = this->create_wall_timer(20ms, std::bind(&LIONode::timerCB, this));
     }
 
@@ -237,7 +246,62 @@ public:
         pub->publish(cloud_msg);
     }
 
-    void publishOdometry(rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub, std::string frame_id, std::string child_frame, const double &time)
+    void setPoseCB(const std::shared_ptr<interface::srv::SetLioPose::Request> request,
+                   std::shared_ptr<interface::srv::SetLioPose::Response> response)
+    {
+        if (!std::isfinite(request->x) || !std::isfinite(request->y) ||
+            !std::isfinite(request->yaw_deg))
+        {
+            response->success = false;
+            response->message = "x, y and yaw_deg must be finite";
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_pose_mutex);
+        if (!m_has_raw_pose || !m_last_raw_pose.position.allFinite() ||
+            !m_last_raw_pose.orientation.coeffs().allFinite() ||
+            m_last_raw_pose.orientation.squaredNorm() <= 0.0)
+        {
+            response->success = false;
+            response->message = "No valid mapping pose available yet";
+            return;
+        }
+
+        constexpr double kRadiansPerDegree = 3.14159265358979323846 / 180.0;
+        const double target_yaw = std::remainder(request->yaw_deg, 360.0) * kRadiansPerDegree;
+        const auto &q = m_last_raw_pose.orientation;
+        const double raw_yaw = std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
+                                          1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+        const double yaw_delta = std::remainder(target_yaw - raw_yaw, 2.0 * 3.14159265358979323846);
+        const Eigen::Quaterniond correction(Eigen::AngleAxisd(yaw_delta, V3D::UnitZ()));
+        V3D target(request->x, request->y, m_last_raw_pose.position.z());
+        V3D translation = target - correction * m_last_raw_pose.position;
+        if (!translation.allFinite())
+        {
+            response->success = false;
+            response->message = "Requested pose produces an invalid offset";
+            return;
+        }
+        m_output_rotation = correction;
+        m_output_translation = translation;
+        // Earlier path poses belong to the old output coordinate convention.
+        m_state_data.path.poses.clear();
+        response->success = true;
+        response->message = "Current pose set; next mapping update will publish corrected coordinates";
+        RCLCPP_INFO(this->get_logger(), "Set current output pose to x=%.3f m, y=%.3f m, yaw=%.3f deg",
+                    request->x, request->y, request->yaw_deg);
+    }
+
+    OutputPose correctedPose()
+    {
+        const OutputPose raw{m_kf->x().t_wi, Eigen::Quaterniond(m_kf->x().r_wi)};
+        std::lock_guard<std::mutex> lock(m_pose_mutex);
+        m_last_raw_pose = raw;
+        m_has_raw_pose = true;
+        return {m_output_rotation * raw.position + m_output_translation,
+                m_output_rotation * raw.orientation};
+    }
+
+    void publishOdometry(rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub, std::string frame_id, std::string child_frame, const double &time, const OutputPose &output_pose)
     {
         if (odom_pub->get_subscription_count() <= 0)
             return;
@@ -245,10 +309,10 @@ public:
         odom.header.frame_id = frame_id;
         odom.header.stamp = Utils::getTime(time);
         odom.child_frame_id = child_frame;
-        odom.pose.pose.position.x = m_kf->x().t_wi.x();
-        odom.pose.pose.position.y = m_kf->x().t_wi.y();
-        odom.pose.pose.position.z = m_kf->x().t_wi.z();
-        Eigen::Quaterniond q(m_kf->x().r_wi);
+        odom.pose.pose.position.x = output_pose.position.x();
+        odom.pose.pose.position.y = output_pose.position.y();
+        odom.pose.pose.position.z = output_pose.position.z();
+        const auto &q = output_pose.orientation;
         odom.pose.pose.orientation.x = q.x();
         odom.pose.pose.orientation.y = q.y();
         odom.pose.pose.orientation.z = q.z();
@@ -261,17 +325,17 @@ public:
         odom_pub->publish(odom);
     }
 
-    void publishPath(rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub, std::string frame_id, const double &time)
+    void publishPath(rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub, std::string frame_id, const double &time, const OutputPose &output_pose)
     {
         if (path_pub->get_subscription_count() <= 0)
             return;
         geometry_msgs::msg::PoseStamped pose;
         pose.header.frame_id = frame_id;
         pose.header.stamp = Utils::getTime(time);
-        pose.pose.position.x = m_kf->x().t_wi.x();
-        pose.pose.position.y = m_kf->x().t_wi.y();
-        pose.pose.position.z = m_kf->x().t_wi.z();
-        Eigen::Quaterniond q(m_kf->x().r_wi);
+        pose.pose.position.x = output_pose.position.x();
+        pose.pose.position.y = output_pose.position.y();
+        pose.pose.position.z = output_pose.position.z();
+        const auto &q = output_pose.orientation;
         pose.pose.orientation.x = q.x();
         pose.pose.orientation.y = q.y();
         pose.pose.orientation.z = q.z();
@@ -280,14 +344,14 @@ public:
         path_pub->publish(m_state_data.path);
     }
 
-    void broadCastTF(std::shared_ptr<tf2_ros::TransformBroadcaster> broad_caster, std::string frame_id, std::string child_frame, const double &time)
+    void broadCastTF(std::shared_ptr<tf2_ros::TransformBroadcaster> broad_caster, std::string frame_id, std::string child_frame, const double &time, const OutputPose &output_pose)
     {
         geometry_msgs::msg::TransformStamped transformStamped;
         transformStamped.header.frame_id = frame_id;
         transformStamped.child_frame_id = child_frame;
         transformStamped.header.stamp = Utils::getTime(time);
-        Eigen::Quaterniond q(m_kf->x().r_wi);
-        V3D t = m_kf->x().t_wi;
+        const auto &q = output_pose.orientation;
+        const auto &t = output_pose.position;
         transformStamped.transform.translation.x = t.x();
         transformStamped.transform.translation.y = t.y();
         transformStamped.transform.translation.z = t.z();
@@ -323,9 +387,10 @@ public:
         if (m_builder->status() != BuilderStatus::MAPPING)
             return;
 
-        broadCastTF(m_tf_broadcaster, m_node_config.world_frame, m_node_config.body_frame, m_package.cloud_end_time);
+        const OutputPose output_pose = correctedPose();
+        broadCastTF(m_tf_broadcaster, m_node_config.world_frame, m_node_config.body_frame, m_package.cloud_end_time, output_pose);
 
-        publishOdometry(m_odom_pub, m_node_config.world_frame, m_node_config.body_frame, m_package.cloud_end_time);
+        publishOdometry(m_odom_pub, m_node_config.world_frame, m_node_config.body_frame, m_package.cloud_end_time, output_pose);
 
         CloudType::Ptr body_cloud = m_builder->lidar_processor()->transformCloud(m_package.cloud, m_kf->x().r_il, m_kf->x().t_il);
 
@@ -335,7 +400,7 @@ public:
 
         publishCloud(m_world_cloud_pub, world_cloud, m_node_config.world_frame, m_package.cloud_end_time);
 
-        publishPath(m_path_pub, m_node_config.world_frame, m_package.cloud_end_time);
+        publishPath(m_path_pub, m_node_config.world_frame, m_package.cloud_end_time, output_pose);
     }
 
 private:
@@ -355,6 +420,12 @@ private:
     std::shared_ptr<IESKF> m_kf;
     std::shared_ptr<MapBuilder> m_builder;
     std::shared_ptr<tf2_ros::TransformBroadcaster> m_tf_broadcaster;
+    rclcpp::Service<interface::srv::SetLioPose>::SharedPtr m_set_pose_srv;
+    std::mutex m_pose_mutex;
+    bool m_has_raw_pose = false;
+    OutputPose m_last_raw_pose{V3D::Zero(), Eigen::Quaterniond::Identity()};
+    Eigen::Quaterniond m_output_rotation = Eigen::Quaterniond::Identity();
+    V3D m_output_translation = V3D::Zero();
 };
 
 int main(int argc, char **argv)

@@ -1,0 +1,62 @@
+# Level 5: retain more scan points and expand the plane-neighbor gate for motion tests.
+imu_topic: /livox/imu
+lidar_topic: /livox/lidar
+body_frame: body
+world_frame: lidar
+print_time_cost: true
+print_pose: true
+
+lidar_filter_num: 4
+lidar_min_range: 0.5
+lidar_max_range: 20.0
+scan_resolution: 0.25
+map_resolution: 0.5
+
+cube_len: 300
+det_range: 60
+move_thresh: 1.5
+
+na: 0.01
+ng: 0.01
+nba: 0.0001
+nbg: 0.0001
+
+imu_init_num: 20
+near_search_num: 7
+ieskf_max_iter: 10
+
+gravity_align: true
+esti_il: false
+
+r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+t_il: [-0.011, -0.02329, 0.04412]
+
+lidar_cov_inv: 1000.0
+
+scan_matching:
+  method: point_to_plane
+  min_effective_points: 30
+
+  point_to_plane:
+    neighbor_count: 10
+    max_neighbor_squared_distance: 1.0
+    plane_fit_threshold: 0.1
+    score_threshold: 0.95
+
+  point_to_point:
+    max_correspondence_distance: 2.236
+    min_effective_points: 20
+
+  ndt:
+    resolution: 1.0
+    min_points_per_voxel: 6
+    covariance_regularization: 0.01
+    max_mahalanobis_distance: 9.0
+    min_effective_points: 20
+
+  loam:
+    neighbor_count: 5
+    max_neighbor_squared_distance: 5.0
+    line_eigenvalue_ratio: 3.0
+    plane_eigenvalue_ratio: 0.1
+    min_effective_points: 20
