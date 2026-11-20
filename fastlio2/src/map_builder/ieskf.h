@@ -74,7 +74,7 @@ public:
     M21D &P() { return m_P; }
 
 private:
-    size_t m_max_iter = 10;
+    size_t m_max_iter = 5;
     State m_x;
     M21D m_P;
     loss_func m_loss_func;

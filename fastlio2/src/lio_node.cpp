@@ -71,6 +71,7 @@ public:
         m_state_data.path.header.frame_id = m_node_config.world_frame;
 
         m_kf = std::make_shared<IESKF>();
+        m_kf->setMaxIter(static_cast<size_t>(m_builder_config.ieskf_max_iter));
         m_builder = std::make_shared<MapBuilder>(m_builder_config, m_kf);
         m_set_pose_srv = this->create_service<interface::srv::SetLioPose>(
             "set_pose", std::bind(&LIONode::setPoseCB, this,
