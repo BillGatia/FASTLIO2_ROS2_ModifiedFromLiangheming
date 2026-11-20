@@ -32,6 +32,7 @@ struct NodeConfig
     std::string world_frame = "lidar";
     bool print_time_cost = false;
     bool print_pose = false;
+    bool dynamic_MaxIter = false;
 };
 struct StateData
 {
@@ -101,6 +102,8 @@ public:
         m_node_config.print_time_cost = config["print_time_cost"].as<bool>();
         if (config["print_pose"])
             m_node_config.print_pose = config["print_pose"].as<bool>();
+        if (config["dynamic_MaxIter"])
+            m_node_config.dynamic_MaxIter = config["dynamic_MaxIter"].as<bool>();
 
         m_builder_config.lidar_filter_num = config["lidar_filter_num"].as<int>();
         m_builder_config.lidar_min_range = config["lidar_min_range"].as<double>();
@@ -371,6 +374,7 @@ public:
         }
     }
 
+    int Colddown = 0; //用于动态调整MaxIter的冷却时间回合数,见下方使用
     void timerCB()
     {
         if (!syncPackage())
@@ -383,6 +387,32 @@ public:
         {
             auto time_used = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1).count() * 1000;
             RCLCPP_WARN(this->get_logger(), "Time cost: %.2f ms", time_used);
+            
+            if(m_node_config.dynamic_MaxIter && Colddown < 0) //Colddown是冷却的意思，因此设置一个大于0的冷却时间，随后递减。当冷却时间小于零，视为可以再次调整
+            {
+                int MaxIter_now = m_kf->getMaxIter();
+                if(time_used >= 90 && MaxIter_now > 1)
+                {
+                    m_kf->setMaxIter(static_cast<size_t>(MaxIter_now - 1));
+                    RCLCPP_WARN(this->get_logger(), "MaxIter_now: %d", MaxIter_now);
+                    Colddown = 5;
+                }
+                // else if(time_used > 30 && time_used < 90 && MaxIter_now != m_builder_config.ieskf_max_iter)
+                // {
+                //     m_kf->setMaxIter(static_cast<size_t>(m_builder_config.ieskf_max_iter));
+                //     RCLCPP_WARN(this->get_logger(), "MaxIter_now: %d", MaxIter_now);
+                // }
+                else if(time_used < 30 && MaxIter_now < 5)
+                {
+                    m_kf->setMaxIter(static_cast<size_t>(MaxIter_now + 1));
+                    RCLCPP_WARN(this->get_logger(), "MaxIter_now: %d", MaxIter_now);
+                    Colddown = 5;
+                }
+            }
+            else
+            {
+                Colddown--;
+            }
         }
 
         if (m_builder->status() != BuilderStatus::MAPPING)
